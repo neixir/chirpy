@@ -4,10 +4,17 @@ import (
 	"net/http"
 )
 
+// CH1 L4 https://www.boot.dev/lessons/861ada77-c583-42c8-a265-657f2c453103
+// CH1 L5 https://www.boot.dev/lessons/8cf7315a-ffc0-4ce0-b482-5972ab695131
+
 func main() {
 	// 1. Create a new http.ServeMux
 	// https://pkg.go.dev/net/http#NewServeMux
 	mux := http.NewServeMux()
+	mux.Handle("/", http.FileServer(http.Dir(".")))
+
+	// CH1 L5
+	// http: attempting to traverse a non-directory
 
 	// 2. Create a new http.Server struct.
 	server := http.Server{
