@@ -41,6 +41,7 @@ func handlerHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func fileserverHandle() http.Handler {
+	// http: //localhost:8080/app -> ""./""
 	return http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
 }
 
@@ -57,12 +58,12 @@ func main() {
 
 	// CH1 L4-L5
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", handlerHealth)
 
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(fileserverHandle()))
 	mux.Handle("/assets", http.FileServer(http.Dir("./assets"))) // CH1 L05
-	mux.HandleFunc("/metrics", apiCfg.metricsHandler)            // CH2 L1
-	mux.HandleFunc("/reset", apiCfg.resetHandler)                // CH2 L1
+	mux.HandleFunc("GET /healthz", handlerHealth)
+	mux.HandleFunc("GET /metrics", apiCfg.metricsHandler) // CH2 L1
+	mux.HandleFunc("POST /reset", apiCfg.resetHandler)    // CH2 L1
 
 	// Create a new http.Server struct.
 	server := &http.Server{
