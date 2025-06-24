@@ -61,9 +61,9 @@ func main() {
 
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(fileserverHandle()))
 	mux.Handle("/assets", http.FileServer(http.Dir("./assets"))) // CH1 L05
-	mux.HandleFunc("GET /healthz", handlerHealth)
-	mux.HandleFunc("GET /metrics", apiCfg.metricsHandler) // CH2 L1
-	mux.HandleFunc("POST /reset", apiCfg.resetHandler)    // CH2 L1
+	mux.HandleFunc("GET /api/healthz", handlerHealth)
+	mux.HandleFunc("GET /api/metrics", apiCfg.metricsHandler) // CH2 L1
+	mux.HandleFunc("POST /api/reset", apiCfg.resetHandler)    // CH2 L1
 
 	// Create a new http.Server struct.
 	server := &http.Server{
