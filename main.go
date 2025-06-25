@@ -9,7 +9,9 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/neixir/chirpy/internal/database"
@@ -29,6 +31,13 @@ import (
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	db             *database.Queries
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
 // CH2 L01
@@ -90,6 +99,86 @@ func handerValidateChirp(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, 200, payload)
 }
 
+func cleanBody(text string) string {
+	profaneWords := []string{"kerfuffle", "sharbert", "fornax"}
+
+	words := strings.Split(text, " ")
+	for i, word := range words {
+		for _, profanity := range profaneWords {
+			if strings.ToLower(word) == profanity {
+				words[i] = "****"
+			}
+		}
+	}
+
+	return strings.Join(words, " ") //newText
+}
+
+// CH5 L05
+func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email string `json:"email"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong")
+	}
+
+	user, err := cfg.db.CreateUser(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong creating user")
+	}
+
+	// Creem "payload" a partir de "user".
+	// En aquest cas es el mateix, pero no sempre sera aixi.
+	payload := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+	respondWithJSON(w, 201, payload)
+
+}
+
+func fileserverHandle() http.Handler {
+	// http://localhost:8080/app -> "./"
+	return http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
+}
+
+// ... + CH3 L04
+func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	//fmt.Fprintf(w, "Hits: %d", cfg.fileserverHits.Load())
+	html :=
+		`
+<html>
+	<body>
+	<h1>Welcome, Chirpy Admin</h1>
+	<p>Chirpy has been visited %d times!</p>
+	</body>
+</html>
+`
+	fmt.Fprintf(w, html, cfg.fileserverHits.Load())
+
+}
+
+func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
+	platform := os.Getenv("PLATFORM")
+	if platform != "dev" {
+		//respondWithError(w, 403, )
+		w.WriteHeader(403)
+	}
+
+	cfg.fileserverHits.Store(0)
+	cfg.db.DeleteAllUsers(r.Context())
+}
+
 // CH4 L02 / L06
 func respondWithError(w http.ResponseWriter, code int, message string) {
 	type errorMessage struct {
@@ -126,49 +215,6 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Write(dat)
 }
 
-func cleanBody(text string) string {
-	profaneWords := []string{"kerfuffle", "sharbert", "fornax"}
-
-	words := strings.Split(text, " ")
-	for i, word := range words {
-		for _, profanity := range profaneWords {
-			if strings.ToLower(word) == profanity {
-				words[i] = "****"
-			}
-		}
-	}
-
-	return strings.Join(words, " ") //newText
-}
-
-func fileserverHandle() http.Handler {
-	// http://localhost:8080/app -> "./"
-	return http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
-}
-
-// ... + CH3 L04
-func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	//fmt.Fprintf(w, "Hits: %d", cfg.fileserverHits.Load())
-	html :=
-		`
-<html>
-	<body>
-	<h1>Welcome, Chirpy Admin</h1>
-	<p>Chirpy has been visited %d times!</p>
-	</body>
-</html>
-`
-	fmt.Fprintf(w, html, cfg.fileserverHits.Load())
-
-}
-
-func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
-	cfg.fileserverHits.Store(0)
-}
-
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -189,9 +235,10 @@ func main() {
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(fileserverHandle()))
 	mux.Handle("/assets", http.FileServer(http.Dir("./assets"))) // CH1 L05
 	mux.HandleFunc("GET /api/healthz", handlerHealth)
-	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)     // CH2 L1
-	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)        // CH2 L1
-	mux.HandleFunc("POST /api/validate_chirp", handerValidateChirp) // CH4 L2
+	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)     // CH2 L01
+	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)        // CH2 L01
+	mux.HandleFunc("POST /api/validate_chirp", handerValidateChirp) // CH4 L02
+	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)     // CH5 L05
 
 	// Create a new http.Server struct.
 	server := &http.Server{
