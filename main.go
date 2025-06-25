@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -15,6 +16,7 @@ import (
 // CH2 L01 https://www.boot.dev/lessons/a13ffa72-18b9-49f7-81a9-c5a17d007b3a
 // CH3 L04 https://www.boot.dev/lessons/892b38f7-d154-4591-ac63-a9fbc2a38187
 // CH4 L02 https://www.boot.dev/lessons/374ef0f7-1d2d-40b8-8cef-14e9ffd033ab
+// CH4 L06 https://www.boot.dev/lessons/7cde3fa8-f38a-444e-92a6-83166a905cb0
 
 // CH2 L01
 type apiConfig struct {
@@ -46,36 +48,15 @@ func handerValidateChirp(w http.ResponseWriter, r *http.Request) {
 		Body string `json:"body"`
 	}
 
-	type errorMessage struct {
-		Error string `json:"error"`
-	}
-
-	type validMessage struct {
-		Valid bool `json:"valid"`
+	type cleanMessage struct {
+		Body string `json:"cleaned_body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		// If any errors occur, it should respond with an appropriate HTTP status code and a JSON body of this shape:
-		// { "error": "Something went wrong" }
-		// log.Printf("Error decoding parameters: %s", err)
-		respBody := errorMessage{
-			Error: "Something went wrong",
-		}
-
-		dat, err := json.Marshal(respBody)
-		if err != nil {
-			log.Printf("Error marshalling JSON: %s", err)
-			w.WriteHeader(500)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(500)
-		w.Write(dat)
-		return
+		respondWithError(w, 500, "Something went wrong")
 	}
 
 	// params is a struct with data populated successfully
@@ -85,28 +66,30 @@ func handerValidateChirp(w http.ResponseWriter, r *http.Request) {
 	// o continuem comprovant si el chirp es valid
 	// For example, if the Chirp is too long, respond with a 400 code and this body:
 	if len(params.Body) > 140 {
-		// Aixo esta basicament copiat de dalt,
-		// es pot fer metode que li passem un missatge d'error i un status code i l'envii
-		respBody := errorMessage{
-			Error: "Chirp is too long",
-		}
-
-		dat, err := json.Marshal(respBody)
-		if err != nil {
-			log.Printf("Error marshalling JSON: %s", err)
-			w.WriteHeader(500)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(400)
-		w.Write(dat)
+		respondWithError(w, 400, "Chirp is too long")
 		return
 	}
 
+	// CH4 L06
+	// Assuming the length validation passed, replace any of the following words in the Chirp with the static 4-character string ****:
+	newText := cleanBody(params.Body)
+
+	// CH4 L02
 	// El chirp es valid
-	respBody := validMessage{
-		Valid: true,
+	payload := cleanMessage{
+		Body: newText,
+	}
+	respondWithJSON(w, 200, payload)
+}
+
+// CH4 L02 / L06
+func respondWithError(w http.ResponseWriter, code int, message string) {
+	type errorMessage struct {
+		Error string `json:"error"`
+	}
+
+	respBody := errorMessage{
+		Error: message,
 	}
 
 	dat, err := json.Marshal(respBody)
@@ -117,12 +100,41 @@ func handerValidateChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
+	w.WriteHeader(code)
 	w.Write(dat)
 }
 
+// CH4 L06
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	dat, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error marshalling JSON: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(dat)
+}
+
+func cleanBody(text string) string {
+	profaneWords := []string{"kerfuffle", "sharbert", "fornax"}
+
+	words := strings.Split(text, " ")
+	for i, word := range words {
+		for _, profanity := range profaneWords {
+			if strings.ToLower(word) == profanity {
+				words[i] = "****"
+			}
+		}
+	}
+
+	return strings.Join(words, " ") //newText
+}
+
 func fileserverHandle() http.Handler {
-	// http: //localhost:8080/app -> ""./""
+	// http://localhost:8080/app -> "./"
 	return http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
 }
 
