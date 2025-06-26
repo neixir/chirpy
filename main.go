@@ -165,14 +165,7 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	payload := Chirp{
-		ID: chirp.ID,
-		CreatedAt: chirp.CreatedAt,
-		UpdatedAt: chirp.UpdatedAt,
-		Body: chirp.Body,
-		UserID: chirp.UserID,
-	}
-	respondWithJSON(w, 201, payload)
+	respondWithJSON(w, 201, chirp)
 }
 
 // CH5 L09
@@ -183,24 +176,7 @@ func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// No podem passar chirps directament pq no te `json:"id"` i tal,
-	// i el nom del key dins el json acaba sent ID, Body, UserID, etc i no serveix
-	payload := []Chirp{}
-	
-	for _, chirp := range chirps {
-		j := Chirp{
-			ID: chirp.ID,
-			Body: chirp.Body,
-			CreatedAt: chirp.CreatedAt,
-			UpdatedAt: chirp.UpdatedAt,
-			UserID: chirp.UserID,
-		}
-
-		payload = append(payload, j)
-	}
-
-	respondWithJSONArray(w, 200, payload)
-
+	respondWithJSONArray(w, 200, chirps)
 }
 
 func fileserverHandle() http.Handler {
@@ -276,7 +252,7 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 }
 
 // CH5 L09
-func respondWithJSONArray(w http.ResponseWriter, code int, payload []Chirp) {
+func respondWithJSONArray[T any](w http.ResponseWriter, code int, payload []T) {
 	dat, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("Error marshalling JSON array: %s", err)
