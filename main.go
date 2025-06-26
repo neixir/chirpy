@@ -175,6 +175,34 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	respondWithJSON(w, 201, payload)
 }
 
+// CH5 L09
+func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
+	chirps, err := cfg.db.GetAllChirps(r.Context())
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong retrieving chirps")
+		return
+	}
+
+	// No podem passar chirps directament pq no te `json:"id"` i tal,
+	// i el nom del key dins el json acaba sent ID, Body, UserID, etc i no serveix
+	payload := []Chirp{}
+	
+	for _, chirp := range chirps {
+		j := Chirp{
+			ID: chirp.ID,
+			Body: chirp.Body,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			UserID: chirp.UserID,
+		}
+
+		payload = append(payload, j)
+	}
+
+	respondWithJSONArray(w, 200, payload)
+
+}
+
 func fileserverHandle() http.Handler {
 	// http://localhost:8080/app -> "./"
 	return http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
@@ -247,6 +275,20 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Write(dat)
 }
 
+// CH5 L09
+func respondWithJSONArray(w http.ResponseWriter, code int, payload []Chirp) {
+	dat, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error marshalling JSON array: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(dat)
+}
+
 func main() {
 	// Llegim variables de .env
 	// TODO Que doni error si el fitxer no existeix
@@ -272,6 +314,8 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)     // CH2 L01
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)        // CH2 L01
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)     // CH5 L05
+	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)     // CH5 L06
+	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)     // CH5 L09
 
 	// Create a new http.Server struct.
 	server := &http.Server{
