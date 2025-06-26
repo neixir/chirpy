@@ -26,11 +26,13 @@ import (
 // CH4 L02 https://www.boot.dev/lessons/374ef0f7-1d2d-40b8-8cef-14e9ffd033ab
 // CH4 L06 https://www.boot.dev/lessons/7cde3fa8-f38a-444e-92a6-83166a905cb0
 // CH5 L01 i seguents per PostgreSQL, Goose, SLQC
+// CH5 L09 https://www.boot.dev/lessons/341b80d4-556f-4c5b-8afc-ffd12d5238c2
 
 // CH2 L01
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	db             *database.Queries
+	user			database.User
 }
 
 type User struct {
@@ -39,6 +41,15 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
 }
+
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body     string    `json:"body"`
+	UserID        uuid.UUID `json:"user_id"`
+}
+
 
 // CH2 L01
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -57,46 +68,6 @@ func handlerHealth(w http.ResponseWriter, r *http.Request) {
 	//fmt.Fprintf(w, "OK")
 	w.Write([]byte("OK"))
 
-}
-
-// CH4 L02
-func handerValidateChirp(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
-		Body string `json:"body"`
-	}
-
-	type cleanMessage struct {
-		Body string `json:"cleaned_body"`
-	}
-
-	decoder := json.NewDecoder(r.Body)
-	params := parameters{}
-	err := decoder.Decode(&params)
-	if err != nil {
-		respondWithError(w, 500, "Something went wrong")
-	}
-
-	// params is a struct with data populated successfully
-
-	// No hi ha hagut errors.
-	// Aqui ara desariem params.Body a la base de dades o el que sigui,
-	// o continuem comprovant si el chirp es valid
-	// For example, if the Chirp is too long, respond with a 400 code and this body:
-	if len(params.Body) > 140 {
-		respondWithError(w, 400, "Chirp is too long")
-		return
-	}
-
-	// CH4 L06
-	// Assuming the length validation passed, replace any of the following words in the Chirp with the static 4-character string ****:
-	newText := cleanBody(params.Body)
-
-	// CH4 L02
-	// El chirp es valid
-	payload := cleanMessage{
-		Body: newText,
-	}
-	respondWithJSON(w, 200, payload)
 }
 
 func cleanBody(text string) string {
@@ -124,12 +95,14 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, 500, "Something went wrong")
+		respondWithError(w, 500, "Something went wrong decoding parameters")
+		return
 	}
-
+	
 	user, err := cfg.db.CreateUser(r.Context(), params.Email)
 	if err != nil {
 		respondWithError(w, 500, "Something went wrong creating user")
+		return
 	}
 
 	// Creem "payload" a partir de "user".
@@ -140,8 +113,66 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
 	}
+	
+	cfg.user = user
+
 	respondWithJSON(w, 201, payload)
 
+}
+
+// CH5 L06
+func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Body string `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong decoding parameters")
+		return
+	}
+
+
+	// CH4 L02
+	// No hi ha hagut errors obtenint el cos del request
+	// Aqui ara desariem params.Body a la base de dades o el que sigui,
+	// o continuem comprovant si el chirp es valid
+	// For example, if the Chirp is too long, respond with a 400 code and this body:
+	if len(params.Body) > 140 {
+		respondWithError(w, 400, "Chirp is too long")
+		return
+	}
+
+	// CH4 L06
+	// Assuming the length validation passed, replace any of the following words in the Chirp with the static 4-character string ****:
+	newText := cleanBody(params.Body)
+
+	// CH4 L02 El chirp es valid
+	// CH5 L06 If the chirp is valid, you should save it in the database
+	// Suposem que acabem de crear un usuari, si no fallara
+	// (hauriem de posar-ho un middleware, pero com que al curs no ho diu, no ho fem)
+	args := database.CreateChirpParams{
+		Body: newText,
+		UserID: cfg.user.ID,	//uuid.New(),
+	}
+
+	chirp, err := cfg.db.CreateChirp(r.Context(), args)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong saving chirp")
+		return
+	}
+
+	payload := Chirp{
+		ID: chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body: chirp.Body,
+		UserID: chirp.UserID,
+	}
+	respondWithJSON(w, 201, payload)
 }
 
 func fileserverHandle() http.Handler {
@@ -172,6 +203,7 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 	platform := os.Getenv("PLATFORM")
 	if platform != "dev" {
 		//respondWithError(w, 403, )
+		fmt.Println("aquest endpoint no funciona en aquest entorn")
 		w.WriteHeader(403)
 	}
 
@@ -216,6 +248,8 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 }
 
 func main() {
+	// Llegim variables de .env
+	// TODO Que doni error si el fitxer no existeix
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
@@ -237,7 +271,6 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", handlerHealth)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)     // CH2 L01
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)        // CH2 L01
-	mux.HandleFunc("POST /api/validate_chirp", handerValidateChirp) // CH4 L02
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)     // CH5 L05
 
 	// Create a new http.Server struct.
