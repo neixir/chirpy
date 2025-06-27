@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	_ "github.com/lib/pq"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
 	"github.com/neixir/chirpy/internal/database"
 )
 
@@ -27,6 +27,7 @@ import (
 // CH4 L06 https://www.boot.dev/lessons/7cde3fa8-f38a-444e-92a6-83166a905cb0
 // CH5 L01 i seguents per PostgreSQL, Goose, SLQC
 // CH5 L09 https://www.boot.dev/lessons/341b80d4-556f-4c5b-8afc-ffd12d5238c2
+// CH5 L10 https://www.boot.dev/lessons/0a07a4a3-c11f-429f-ac70-52fa2e016bc0
 
 // CH2 L01
 type apiConfig struct {
@@ -179,6 +180,26 @@ func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request
 	respondWithJSONArray(w, 200, chirps)
 }
 
+// CH5 L10
+func (cfg *apiConfig) handlerGetOneChirp(w http.ResponseWriter, r *http.Request) {
+	chirp_id_string := r.PathValue("chirpID")
+	// sera "" si no troba "chirpID" -- retornar 500 pq es error del servidor
+
+	// https://stackoverflow.com/a/62952994
+	chirp_id, _ := uuid.Parse(chirp_id_string)
+	// posar err si volem mirar que el format sigui correcte -- igualment seria 500 error intern
+
+	chirp, err := cfg.db.GetOneChirp(r.Context(), chirp_id)
+	if err != nil {
+		//respondWithError(w, 500, "Something went wrong retrieving chirp")
+		w.WriteHeader(404)
+		return
+	}
+
+	respondWithJSON(w, 200, chirp)
+}
+
+
 func fileserverHandle() http.Handler {
 	// http://localhost:8080/app -> "./"
 	return http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
@@ -189,7 +210,6 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	//fmt.Fprintf(w, "Hits: %d", cfg.fileserverHits.Load())
 	html :=
 		`
 <html>
@@ -206,8 +226,7 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
 func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 	platform := os.Getenv("PLATFORM")
 	if platform != "dev" {
-		//respondWithError(w, 403, )
-		fmt.Println("aquest endpoint no funciona en aquest entorn")
+		respondWithError(w, 403, "aquest endpoint no funciona en aquest entorn")
 		w.WriteHeader(403)
 	}
 
@@ -292,6 +311,7 @@ func main() {
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)     // CH5 L05
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)     // CH5 L06
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)     // CH5 L09
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetOneChirp)     // CH5 L10
 
 	// Create a new http.Server struct.
 	server := &http.Server{
