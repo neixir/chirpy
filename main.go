@@ -14,6 +14,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"github.com/neixir/chirpy/internal/auth"
 	"github.com/neixir/chirpy/internal/database"
 )
 
@@ -90,6 +91,7 @@ func cleanBody(text string) string {
 func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Email string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -100,14 +102,25 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	
-	user, err := cfg.db.CreateUser(r.Context(), params.Email)
+	hashed_password, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong hashing password")
+		return
+	}
+
+	args := database.CreateUserParams{
+			Email: params.Email,
+			HashedPassword: hashed_password,
+	}
+
+	user, err := cfg.db.CreateUser(r.Context(), args)
 	if err != nil {
 		respondWithError(w, 500, "Something went wrong creating user")
 		return
 	}
 
 	// Creem "payload" a partir de "user".
-	// En aquest cas es el mateix, pero no sempre sera aixi.
+	// Es el mateix, pero sense password
 	payload := User{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
@@ -199,6 +212,60 @@ func (cfg *apiConfig) handlerGetOneChirp(w http.ResponseWriter, r *http.Request)
 	respondWithJSON(w, 200, chirp)
 }
 
+// This endpoint should allow a user to login.
+// In a future exercise, this endpoint will be used to give the user a token that
+// they can use to make authenticated requests.
+// For now, let's just make sure password validation is working.
+func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
+    type parameters struct {
+        Email string `json:"email"`
+        Password string `json:"password"`
+    }
+
+    decoder := json.NewDecoder(r.Body)
+    params := parameters{}
+    err := decoder.Decode(&params)
+    if err != nil {
+        respondWithError(w, 500, "Something went wrong decoding parameters")
+        return
+    }
+
+	wrongEmailOrPassword := false
+	user, err := cfg.db.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		// respondWithError(w, 500, "Something went wrong getting user")
+		// return
+		wrongEmailOrPassword = true
+	}
+    
+    // Once you have the user, check to see if their password matches the stored hash using your internal package.
+    match := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	
+    // If either the user lookup or the password comparison errors, just return a 401 Unauthorized response
+    // with the message "Incorrect email or password".
+    if match != nil {
+		wrongEmailOrPassword = true
+	}
+
+	if wrongEmailOrPassword {
+		respondWithError(w, 401, "Incorrect email or password")
+		return
+    } else { 
+	    // If the passwords match, return a 200 OK response and a copy of the user resource (without the password of course)
+		// Creem "payload" a partir de "user".
+        // Es el mateix, pero sense password
+        payload := User{
+			ID:        user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+			Email:     user.Email,
+        }
+
+        // cfg.user = user
+
+        respondWithJSON(w, 200, payload)
+    }
+}
 
 func fileserverHandle() http.Handler {
 	// http://localhost:8080/app -> "./"
@@ -308,10 +375,11 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", handlerHealth)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)     // CH2 L01
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)        // CH2 L01
-	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)     // CH5 L05
+	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)     // CH5 L05 + CH6 L01
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)     // CH5 L06
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)     // CH5 L09
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetOneChirp)     // CH5 L10
+	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)     // CH6 L01
 
 	// Create a new http.Server struct.
 	server := &http.Server{
