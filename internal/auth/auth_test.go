@@ -40,3 +40,7 @@ func TestMakeJWT(t *testing.T) {
 		t.Errorf("Expected user ID %v, got %v", userID, validatedUserID)
 	}
 }
+
+// TODO
+func TestHeaderHasBearer(t *testing.T) {
+}

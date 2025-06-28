@@ -29,21 +29,26 @@ import (
 // CH5 L01 i seguents per PostgreSQL, Goose, SLQC
 // CH5 L09 https://www.boot.dev/lessons/341b80d4-556f-4c5b-8afc-ffd12d5238c2
 // CH5 L10 https://www.boot.dev/lessons/0a07a4a3-c11f-429f-ac70-52fa2e016bc0
+// CH6 L07 https://www.boot.dev/lessons/0689e0d0-bdb1-4cc8-b577-f0dd0535ad00
 
 // CH2 L01
 type apiConfig struct {
-	fileserverHits atomic.Int32
+	fileserverHits atomic.Int32			// ja no cal?
 	db             *database.Queries
-	user			database.User
+	user			database.User		// s'haura de treure?
+	secret			string
 }
 
+// TODO renombrar a userResponse
 type User struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Token		string	`json:"token"`
 }
 
+// TODO renombrar (i potser no es fa servir)
 type Chirp struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
@@ -52,6 +57,8 @@ type Chirp struct {
 	UserID        uuid.UUID `json:"user_id"`
 }
 
+const DefaultExpiresInSeconds = 60 * 60		// 1h
+const MaxExpiresInSeconds = 60 * 60
 
 // CH2 L01
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -109,12 +116,13 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 	}
 
 	args := database.CreateUserParams{
-			Email: params.Email,
-			HashedPassword: hashed_password,
+		Email: params.Email,
+		HashedPassword: hashed_password,
 	}
 
 	user, err := cfg.db.CreateUser(r.Context(), args)
 	if err != nil {
+		fmt.Println(err.Error())
 		respondWithError(w, 500, "Something went wrong creating user")
 		return
 	}
@@ -138,7 +146,7 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Body string `json:"body"`
-		UserID uuid.UUID `json:"user_id"`
+		// UserID uuid.UUID `json:"user_id"`	// segurament no es fara servir
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -148,6 +156,23 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, 500, "Something went wrong decoding parameters")
 		return
 	}
+
+	// CH6 L07
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		// Responem amb l'error exacte, pero en prod hauriem de loguejar l'error i retornar ""
+		respondWithError(w, 500, err.Error())
+		return
+	}
+	
+	userID, err := auth.ValidateJWT(token, cfg.secret)
+	if err != nil {
+		// Responem amb l'error exacte, pero en prod hauriem de loguejar l'error i retornar ""
+		respondWithError(w, 401, err.Error())
+		return
+	}
+
+
 
 
 	// CH4 L02
@@ -170,7 +195,7 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	// (hauriem de posar-ho un middleware, pero com que al curs no ho diu, no ho fem)
 	args := database.CreateChirpParams{
 		Body: newText,
-		UserID: cfg.user.ID,	//uuid.New(),
+		UserID: userID,	//cfg.user.ID,	//uuid.New(),
 	}
 
 	chirp, err := cfg.db.CreateChirp(r.Context(), args)
@@ -220,6 +245,7 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
     type parameters struct {
         Email string `json:"email"`
         Password string `json:"password"`
+		ExpiresInSeconds int32 `json:"expires_in_seconds"`	// CH6 L07
     }
 
     decoder := json.NewDecoder(r.Body)
@@ -229,6 +255,19 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
         respondWithError(w, 500, "Something went wrong decoding parameters")
         return
     }
+
+	// CH6 L07
+	// If it's specified by the client, use it as the expiration time.
+	// If it's not specified, use a default expiration time of 1 hour.
+	// If the client specified a number over 1 hour, use 1 hour as the expiration time.
+	if params.ExpiresInSeconds == 0 {
+		params.ExpiresInSeconds = DefaultExpiresInSeconds
+	} else {
+		if params.ExpiresInSeconds > MaxExpiresInSeconds {
+			params.ExpiresInSeconds = MaxExpiresInSeconds
+		}
+	}
+
 
 	wrongEmailOrPassword := false
 	user, err := cfg.db.GetUserByEmail(r.Context(), params.Email)
@@ -251,20 +290,43 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 401, "Incorrect email or password")
 		return
     } else { 
-	    // If the passwords match, return a 200 OK response and a copy of the user resource (without the password of course)
-		// Creem "payload" a partir de "user".
-        // Es el mateix, pero sense password
+		token, err := auth.MakeJWT(user.ID, cfg.secret, time.Duration(params.ExpiresInSeconds) * time.Second)
+		if err != nil {
+			respondWithError(w, 500, "Error creting token")
+			return
+		}
+		
+		// createdAt, err := convertTimeStampToRFC3339(user.CreatedAt)
+		// updatedAt, err := convertTimeStampToRFC3339(user.UpdatedAt)
+
+		// Es el mateix struct que User, pero sense password i amb token
         payload := User{
 			ID:        user.ID,
-			CreatedAt: user.CreatedAt,
+			CreatedAt: user.CreatedAt, //Format(time.RFC3339),
 			UpdatedAt: user.UpdatedAt,
 			Email:     user.Email,
+			Token:		token,
         }
-
-        // cfg.user = user
 
         respondWithJSON(w, 200, payload)
     }
+}
+
+// Aixo tret de Claude per convertir formats,
+// (de "2025-06-27 16:31:01.65266" a "2021-07-01T00:00:00Z")
+// Potser no es important, pero a la lliçó diu
+// que s'ha de retornar en aquest altre format
+// Igualment no va pq inputTime es time.Time ...
+func convertTimeStampToRFC3339(inputTime string) (string, error) {
+	parsedTime, err := time.Parse(time.RFC3339Nano, inputTime)
+	if err != nil {
+		return "", err
+	}
+
+	// Format to the desired output
+	outputTime := parsedTime.Format(time.RFC3339)
+
+	return outputTime, nil
 }
 
 func fileserverHandle() http.Handler {
@@ -366,6 +428,9 @@ func main() {
 	apiCfg := apiConfig{
 		db: dbQueries,
 	}
+
+	// CH6 L07
+	apiCfg.secret = os.Getenv("SECRET")
 
 	// CH1 L4-L5
 	mux := http.NewServeMux()
