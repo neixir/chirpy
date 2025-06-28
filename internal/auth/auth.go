@@ -1,6 +1,8 @@
 package auth
 
 import (
+    "crypto/rand"
+    "encoding/hex"
     "errors"
     "net/http"
     "strings"
@@ -14,6 +16,7 @@ import (
 // CH6 L01 https://www.boot.dev/lessons/294e5c16-d1e8-4836-871c-dedc98581236
 // CH6 L06 https://www.boot.dev/lessons/be93db0d-4c6d-49cf-b56d-ba22392eb160
 // CH6 L07 https://www.boot.dev/lessons/0689e0d0-bdb1-4cc8-b577-f0dd0535ad00
+// CH6 L12 https://www.boot.dev/lessons/f7285cef-5185-4b15-b5fc-9533ccaafe8a
 
 // CH6 L01
 // Hash the password using the bcrypt.GenerateFromPassword function.
@@ -92,4 +95,22 @@ func GetBearerToken(headers http.Header) (string, error) {
     }
 
     return sep[1], nil
+}
+
+// CH6 L12
+// Generate a random 256-bit (32-byte) hex-encoded string
+func MakeRefreshToken() (string, error) {
+    // https://pkg.go.dev/crypto/rand#Read
+    // Generate 32 bytes (256 bits) of random data from the crypto/rand package
+    // (math/rand's Read function is deprecated).
+    // Diu que "no error handling is necessary, as Read always succeeds"
+    // pero igualment agafem "err" per tornar-ho despres
+    key := make([]byte, 32)
+	_, err := rand.Read(key)
+
+    // https://pkg.go.dev/encoding/hex#EncodeToString
+    // Convert the random data to a hex string
+    encoded := hex.EncodeToString(key)
+
+    return encoded, err
 }

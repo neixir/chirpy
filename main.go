@@ -30,6 +30,7 @@ import (
 // CH5 L09 https://www.boot.dev/lessons/341b80d4-556f-4c5b-8afc-ffd12d5238c2
 // CH5 L10 https://www.boot.dev/lessons/0a07a4a3-c11f-429f-ac70-52fa2e016bc0
 // CH6 L07 https://www.boot.dev/lessons/0689e0d0-bdb1-4cc8-b577-f0dd0535ad00
+// CH6 L12 https://www.boot.dev/lessons/f7285cef-5185-4b15-b5fc-9533ccaafe8a
 
 // CH2 L01
 type apiConfig struct {
@@ -46,6 +47,7 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
 	Token		string	`json:"token"`
+	RefreshToken	string	`json:"refresh_token"`
 }
 
 // TODO renombrar (i potser no es fa servir)
@@ -172,9 +174,6 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-
-
-
 	// CH4 L02
 	// No hi ha hagut errors obtenint el cos del request
 	// Aqui ara desariem params.Body a la base de dades o el que sigui,
@@ -245,7 +244,6 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
     type parameters struct {
         Email string `json:"email"`
         Password string `json:"password"`
-		ExpiresInSeconds int32 `json:"expires_in_seconds"`	// CH6 L07
     }
 
     decoder := json.NewDecoder(r.Body)
@@ -256,24 +254,9 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-	// CH6 L07
-	// If it's specified by the client, use it as the expiration time.
-	// If it's not specified, use a default expiration time of 1 hour.
-	// If the client specified a number over 1 hour, use 1 hour as the expiration time.
-	if params.ExpiresInSeconds == 0 {
-		params.ExpiresInSeconds = DefaultExpiresInSeconds
-	} else {
-		if params.ExpiresInSeconds > MaxExpiresInSeconds {
-			params.ExpiresInSeconds = MaxExpiresInSeconds
-		}
-	}
-
-
 	wrongEmailOrPassword := false
 	user, err := cfg.db.GetUserByEmail(r.Context(), params.Email)
 	if err != nil {
-		// respondWithError(w, 500, "Something went wrong getting user")
-		// return
 		wrongEmailOrPassword = true
 	}
     
@@ -290,14 +273,26 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 401, "Incorrect email or password")
 		return
     } else { 
-		token, err := auth.MakeJWT(user.ID, cfg.secret, time.Duration(params.ExpiresInSeconds) * time.Second)
+		token, err := auth.MakeJWT(user.ID, cfg.secret, time.Duration(DefaultExpiresInSeconds) * time.Second)
 		if err != nil {
-			respondWithError(w, 500, "Error creting token")
+			respondWithError(w, 500, "Error creating token")
 			return
 		}
+
+		// Refresh token
+		refreshToken, _ := auth.MakeRefreshToken()
 		
-		// createdAt, err := convertTimeStampToRFC3339(user.CreatedAt)
-		// updatedAt, err := convertTimeStampToRFC3339(user.UpdatedAt)
+		args := database.CreateRefreshTokenParams{
+			Token: refreshToken,
+			UserID: user.ID,
+			ExpiresAt: time.Now().UTC().AddDate(0, 0, 60),
+		}
+
+		_, err = cfg.db.CreateRefreshToken(r.Context(), args)
+		if err != nil {
+			respondWithError(w, 500, "Error saving refresh token")
+			return
+		}
 
 		// Es el mateix struct que User, pero sense password i amb token
         payload := User{
@@ -306,27 +301,84 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt: user.UpdatedAt,
 			Email:     user.Email,
 			Token:		token,
+			RefreshToken:	refreshToken,
         }
 
         respondWithJSON(w, 200, payload)
     }
 }
 
-// Aixo tret de Claude per convertir formats,
-// (de "2025-06-27 16:31:01.65266" a "2021-07-01T00:00:00Z")
-// Potser no es important, pero a la lliçó diu
-// que s'ha de retornar en aquest altre format
-// Igualment no va pq inputTime es time.Time ...
-func convertTimeStampToRFC3339(inputTime string) (string, error) {
-	parsedTime, err := time.Parse(time.RFC3339Nano, inputTime)
+// CH6 L12
+func (cfg *apiConfig) handlerRefreshToken(w http.ResponseWriter, r *http.Request) {
+	// Tambe diu "does not accept a request body",
+	// potser podriem veure si hi ha body i en aquest cas sortir sense fer res
+
+	bearer, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		return "", err
+		// Responem amb l'error exacte, pero en prod hauriem de loguejar l'error i retornar ""
+		respondWithError(w, 500, err.Error())
+		return
 	}
 
-	// Format to the desired output
-	outputTime := parsedTime.Format(time.RFC3339)
+	doesNotExistOrExpired := false
+	refreshToken, err := cfg.db.GetRefreshToken(r.Context(), bearer)
+	if err != nil {
+		doesNotExistOrExpired = true
+	}
+	
+	// fmt.Printf("now: %v\nexp: %v", time.Now().UTC(), refreshToken.ExpiresAt)
+	
+	if time.Now().UTC().After(refreshToken.ExpiresAt) {
+		doesNotExistOrExpired = true
+	}
+	
+	// Aixo no ho diu, pero si no ho mirem, "/api/revoke" no te cap efecte
+	if refreshToken.RevokedAt.Valid {
+		doesNotExistOrExpired = true
+	}
 
-	return outputTime, nil
+	// If it doesn't exist, or if it's expired, respond with a 401 status code. 
+	if doesNotExistOrExpired {
+		w.WriteHeader(401)
+		return
+	}
+
+	// Creem token now
+	newJWT, err := auth.MakeJWT(refreshToken.UserID, cfg.secret, time.Duration(DefaultExpiresInSeconds) * time.Second)
+	if err != nil {
+		respondWithError(w, 500, "Error creating token")
+		return
+	}
+
+	// Otherwise, respond with a 200 code
+	type refToken struct {
+		Token string `json:"token"`
+	}
+	respondWithJSON(w, 200, refToken{Token:newJWT})
+
+}
+
+// CH6 L12
+func (cfg *apiConfig) handlerRevokeToken(w http.ResponseWriter, r *http.Request) {
+	// Tambe diu "does not accept a request body",
+	// potser podriem veure si hi ha body i en aquest cas sortir sense fer res
+
+	bearer, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		// Responem amb l'error exacte, pero en prod hauriem de loguejar l'error i retornar ""
+		respondWithError(w, 500, err.Error())
+		return
+	}
+
+	err = cfg.db.RevokeToken(r.Context(), bearer)
+	if err != nil {
+		// Responem amb l'error exacte, pero en prod hauriem de loguejar l'error i retornar ""
+		respondWithError(w, 500, err.Error())
+		return
+	}
+
+	// A 204 status means the request was successful but no body is returned.
+	w.WriteHeader(204)
 }
 
 func fileserverHandle() http.Handler {
@@ -444,7 +496,9 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)     // CH5 L06
 	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)     // CH5 L09
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetOneChirp)     // CH5 L10
-	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)     // CH6 L01
+	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)     // CH6 L01, L07, L12
+	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefreshToken)     // CH6 L12
+	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevokeToken)     // CH6 L12
 
 	// Create a new http.Server struct.
 	server := &http.Server{

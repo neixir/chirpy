@@ -8,4 +8,5 @@ go get golang.org/x/crypto/bcrypt
 ```
 DB_URL="postgres://..."
 PLATFORM="dev"
+SECRET="somesecretkey"
 ```
