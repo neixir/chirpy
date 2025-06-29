@@ -381,6 +381,74 @@ func (cfg *apiConfig) handlerRevokeToken(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(204)
 }
 
+// CH7 L1
+// Adaptat de handlerCreateUser
+func (cfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, r *http.Request) {
+	bearer, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		// TODO Log error
+		fmt.Println(err.Error())
+		w.WriteHeader(401)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(bearer, cfg.secret)
+	if err != nil {
+		// TODO Log er.Error()
+		w.WriteHeader(401)
+		return
+	}
+
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong decoding parameters")
+		return
+	}
+
+	hashed_password, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong hashing password")
+		return
+	}
+
+	args := database.UpdateUserParams{
+		Email:          params.Email,
+		HashedPassword: hashed_password,
+		ID:             userID,
+	}
+
+	err = cfg.db.UpdateUser(r.Context(), args)
+	if err != nil {
+		fmt.Println(err.Error())
+		respondWithError(w, 500, "Something went wrong updating user")
+		return
+	}
+
+	user, err := cfg.db.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong searching for updated email")
+		return
+	}
+
+	// Creem "payload" a partir de "user".
+	// Es el mateix, pero sense password
+	payload := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+
+	respondWithJSON(w, 200, payload)
+}
+
 func fileserverHandle() http.Handler {
 	// http://localhost:8080/app -> "./"
 	return http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
@@ -499,6 +567,7 @@ func main() {
 	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)     // CH6 L01, L07, L12
 	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefreshToken)     // CH6 L12
 	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevokeToken)     // CH6 L12
+	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)                // CH7 L1
 
 	// Create a new http.Server struct.
 	server := &http.Server{
