@@ -1,3 +1,4 @@
+
 package main
 
 import (
@@ -33,6 +34,7 @@ import (
 // CH6 L12 https://www.boot.dev/lessons/f7285cef-5185-4b15-b5fc-9533ccaafe8a
 // CH7 L01 https://www.boot.dev/lessons/be14c814-e6c2-4b96-a361-e33bcfe71f00
 // CH7 L04 https://www.boot.dev/lessons/61628ee7-a227-45a2-ab79-2721a52db32a
+// CH8 L10 https://www.boot.dev/lessons/1304e939-bf50-48d3-a351-b35faafc267d
 
 // CH2 L01
 type apiConfig struct {
@@ -50,6 +52,7 @@ type User struct {
 	Email     string    `json:"email"`
 	Token		string	`json:"token"`
 	RefreshToken	string	`json:"refresh_token"`
+	IsChirpyRed bool	`json:"is_chirpy_red"`
 }
 
 // TODO renombrar (i potser no es fa servir)
@@ -58,6 +61,15 @@ type Chirp struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Body     string    `json:"body"`
+	UserID        uuid.UUID `json:"user_id"`
+}
+
+type polkaWebhook struct {
+	Event	string	`json:"event"`
+	Data	polkaWebhookData `json:"data"`
+}
+
+type polkaWebhookData struct {
 	UserID        uuid.UUID `json:"user_id"`
 }
 
@@ -100,6 +112,7 @@ func cleanBody(text string) string {
 
 // CH5 L05
 func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
+	// Aixo  de parameters/decoder/decode es repeteix molt, fer-ne metode
 	type parameters struct {
 		Email string `json:"email"`
 		Password string `json:"password"`
@@ -138,9 +151,10 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
+		IsChirpyRed: user.IsChirpyRed.Bool,
 	}
 	
-	cfg.user = user
+	// cfg.user = user
 
 	respondWithJSON(w, 201, payload)
 
@@ -304,6 +318,7 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 			Email:     user.Email,
 			Token:		token,
 			RefreshToken:	refreshToken,
+			IsChirpyRed: user.IsChirpyRed.Bool,
         }
 
         respondWithJSON(w, 200, payload)
@@ -446,6 +461,7 @@ func (cfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, r *http.Request) 
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
+		IsChirpyRed: user.IsChirpyRed.Bool,
 	}
 
 	respondWithJSON(w, 200, payload)
@@ -495,6 +511,43 @@ func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(403)
 		return
 	}
+}
+
+func (cfg *apiConfig) handlerPolkaWebhooks(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	params := polkaWebhook{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong decoding parameters")
+		return
+	}
+
+	// If the event is anything other than user.upgraded, the endpoint should immediately respond
+	// with a 204 status code - we don't care about any other events.
+	if params.Event != "user.upgraded" {
+		w.WriteHeader(204)
+		return
+	}
+	
+	// TODO Comprovar que realment params.Data.UserID existeixi i sigui un UUID
+	
+	// If the event is user.upgraded, then it should update the user in the database, and mark that they are a Chirpy Red member.
+	err = cfg.db.UpgradeUserToChirpyRed(r.Context(), params.Data.UserID)
+	if err != nil {
+		// If the user can't be found, the endpoint should respond with a 404 status code.
+		// Pero l'error pot ser un altre aqui...
+		fmt.Println(err.Error())
+		w.WriteHeader(404)
+		return
+	}
+
+	// If the user is upgraded successfully, the endpoint should respond with a 204 status code and an empty response body.
+	w.WriteHeader(204)
+
+
+	// Polka uses the response code to know whether or not the webhook was received successfully.
+	// If the response code is anything other than 2XX, they'll retry the request
+
 }
 
 func fileserverHandle() http.Handler {
@@ -615,8 +668,9 @@ func main() {
 	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)                    // CH6 L01, L07, L12
 	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefreshToken)           // CH6 L12
 	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevokeToken)             // CH6 L12
-	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)                // CH7 L1
-	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirp) // CH7 L4
+	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)                // CH7 L01
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirp) // CH7 L04
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.handlerPolkaWebhooks) // CH8 L01
 
 	// Create a new http.Server struct.
 	server := &http.Server{
