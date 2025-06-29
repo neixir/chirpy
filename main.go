@@ -223,9 +223,21 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	respondWithJSON(w, 201, chirp)
 }
 
-// CH5 L09
+// CH5 L09 + CH9 L01
 func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
-	chirps, err := cfg.db.GetAllChirps(r.Context())
+
+	author_id_string := r.URL.Query().Get("author_id")
+
+	var chirps []database.Chirp
+	var err error
+
+	if author_id_string == "" {
+		chirps, err = cfg.db.GetAllChirps(r.Context())
+	} else {
+		author_id, _ := uuid.Parse(author_id_string)
+		chirps, err = cfg.db.GetAllChirpsByAuthor(r.Context(), author_id)
+	}
+
 	if err != nil {
 		respondWithError(w, 500, "Something went wrong retrieving chirps")
 		return
