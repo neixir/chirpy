@@ -31,6 +31,8 @@ import (
 // CH5 L10 https://www.boot.dev/lessons/0a07a4a3-c11f-429f-ac70-52fa2e016bc0
 // CH6 L07 https://www.boot.dev/lessons/0689e0d0-bdb1-4cc8-b577-f0dd0535ad00
 // CH6 L12 https://www.boot.dev/lessons/f7285cef-5185-4b15-b5fc-9533ccaafe8a
+// CH7 L01 https://www.boot.dev/lessons/be14c814-e6c2-4b96-a361-e33bcfe71f00
+// CH7 L04 https://www.boot.dev/lessons/61628ee7-a227-45a2-ab79-2721a52db32a
 
 // CH2 L01
 type apiConfig struct {
@@ -449,6 +451,52 @@ func (cfg *apiConfig) handlerUpdateUser(w http.ResponseWriter, r *http.Request) 
 	respondWithJSON(w, 200, payload)
 }
 
+// CH7 L4
+func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request) {
+	bearer, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		// TODO Log error
+		fmt.Println(err.Error())
+		w.WriteHeader(401)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(bearer, cfg.secret)
+	if err != nil {
+		// TODO Log er.Error()
+		w.WriteHeader(401)
+		return
+	}
+
+	// Copiat o adaptat de hanldeGetOneChirp, potser fer-ne metode
+	chirp_id_string := r.PathValue("chirpID")
+	chirp_id, _ := uuid.Parse(chirp_id_string)
+	chirp, err := cfg.db.GetOneChirp(r.Context(), chirp_id)
+	if err != nil {
+		// If the chirp is not found, return a 404 status code.
+		// respondWithError(w, 500, "Something went wrong retrieving chirp")
+		w.WriteHeader(404)
+		return
+	}
+
+	if userID == chirp.UserID {
+		err = cfg.db.DeleteChirp(r.Context(), chirp_id)
+		if err != nil {
+			w.WriteHeader(500)
+			return
+		}
+
+		// If the chirp is deleted successfully, return a 204 status code.
+		w.WriteHeader(204)
+		
+
+	} else {
+		// No es l'usuari
+		w.WriteHeader(403)
+		return
+	}
+}
+
 func fileserverHandle() http.Handler {
 	// http://localhost:8080/app -> "./"
 	return http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
@@ -558,16 +606,17 @@ func main() {
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(fileserverHandle()))
 	mux.Handle("/assets", http.FileServer(http.Dir("./assets"))) // CH1 L05
 	mux.HandleFunc("GET /api/healthz", handlerHealth)
-	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)     // CH2 L01
-	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)        // CH2 L01
-	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)     // CH5 L05 + CH6 L01
-	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)     // CH5 L06
-	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)     // CH5 L09
-	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetOneChirp)     // CH5 L10
-	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)     // CH6 L01, L07, L12
-	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefreshToken)     // CH6 L12
-	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevokeToken)     // CH6 L12
+	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)               // CH2 L01
+	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)                  // CH2 L01
+	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)               // CH5 L05 + CH6 L01
+	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)             // CH5 L06
+	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)             // CH5 L09
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetOneChirp)    // CH5 L10
+	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)                    // CH6 L01, L07, L12
+	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefreshToken)           // CH6 L12
+	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevokeToken)             // CH6 L12
 	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)                // CH7 L1
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirp) // CH7 L4
 
 	// Create a new http.Server struct.
 	server := &http.Server{
