@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,8 @@ import (
 // CH7 L01 https://www.boot.dev/lessons/be14c814-e6c2-4b96-a361-e33bcfe71f00
 // CH7 L04 https://www.boot.dev/lessons/61628ee7-a227-45a2-ab79-2721a52db32a
 // CH8 L10 https://www.boot.dev/lessons/1304e939-bf50-48d3-a351-b35faafc267d
+// CH9 L01 https://www.boot.dev/lessons/c1a4f8aa-de85-45fe-9e70-e49a98e14e3a
+// CH9 L04 https://www.boot.dev/lessons/2f20da66-64d8-47b4-8678-4a95cd06767a
 
 // CH2 L01
 type apiConfig struct {
@@ -223,14 +226,14 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	respondWithJSON(w, 201, chirp)
 }
 
-// CH5 L09 + CH9 L01
+// CH5 L09 (GetAllChirps) + CH9 L01 (author_id) + CH9 L04 (sort)
 func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
 
 	author_id_string := r.URL.Query().Get("author_id")
-
+	
 	var chirps []database.Chirp
 	var err error
-
+	
 	if author_id_string == "" {
 		chirps, err = cfg.db.GetAllChirps(r.Context())
 	} else {
@@ -241,6 +244,14 @@ func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		respondWithError(w, 500, "Something went wrong retrieving chirps")
 		return
+	}
+
+	// CH9 L04
+	sort_order := r.URL.Query().Get("sort")
+	if sort_order == "desc" {
+		sort.Slice(chirps, func(i, j int) bool { return chirps[i].CreatedAt.After(chirps[j].CreatedAt) })
+	} else {
+		sort.Slice(chirps, func(i, j int) bool { return chirps[i].CreatedAt.Before(chirps[j].CreatedAt) })
 	}
 
 	respondWithJSONArray(w, 200, chirps)
