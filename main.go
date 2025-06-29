@@ -42,6 +42,7 @@ type apiConfig struct {
 	db             *database.Queries
 	user			database.User		// s'haura de treure?
 	secret			string
+	polkaKey		string				// ch8 l04
 }
 
 // TODO renombrar a userResponse
@@ -504,7 +505,6 @@ func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request)
 
 		// If the chirp is deleted successfully, return a 204 status code.
 		w.WriteHeader(204)
-		
 
 	} else {
 		// No es l'usuari
@@ -514,9 +514,22 @@ func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request)
 }
 
 func (cfg *apiConfig) handlerPolkaWebhooks(w http.ResponseWriter, r *http.Request) {
+	apikey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		// Responem amb l'error exacte, pero en prod hauriem de loguejar l'error i retornar ""
+		respondWithError(w, 401, err.Error())
+		return
+	}
+
+	if apikey != cfg.polkaKey {
+		w.WriteHeader(401)
+		return
+	}
+
+
 	decoder := json.NewDecoder(r.Body)
 	params := polkaWebhook{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
 		respondWithError(w, 500, "Something went wrong decoding parameters")
 		return
@@ -652,6 +665,9 @@ func main() {
 
 	// CH6 L07
 	apiCfg.secret = os.Getenv("SECRET")
+	
+	// CH8 L05
+	apiCfg.polkaKey = os.Getenv("POLKA_KEY")
 
 	// CH1 L4-L5
 	mux := http.NewServeMux()

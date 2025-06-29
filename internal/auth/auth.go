@@ -114,3 +114,23 @@ func MakeRefreshToken() (string, error) {
 
     return encoded, err
 }
+
+// CH8 L04
+// Adaptat de GetBearerToken (nomes canviem "Bearer" de if sep[0] a "ApiKey")
+func GetAPIKey(headers http.Header) (string, error) {
+    authorization := headers.Get("Authorization")
+    if authorization == "" {
+        return "", errors.New("no authorization header")
+    }
+
+    sep := strings.Split(authorization, " ")
+    if len(sep) != 2 {
+        return "", errors.New("wrong format in authorization header")
+    }
+    
+    if sep[0] != "ApiKey" {
+        return "", errors.New("wrong format in authorization header")
+    }
+
+    return sep[1], nil   
+}
